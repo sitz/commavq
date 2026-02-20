@@ -120,19 +120,19 @@ def load_gpt_model(device: str, model_url: str = MODEL_URL):
         model.load_state_dict_from_url(model_url, assign=True)
     except TypeError:
         model.load_state_dict_from_url(model_url)
-    model = model.eval().to(device=device, dtype=torch.float32)
+    target_device = torch.device(device)
+    model = model.eval().to(device=target_device, dtype=torch.float32)
     for param in model.parameters():
         param.requires_grad_(False)
-    # Keep KV cache dtype aligned with model activations to avoid index_put dtype mismatch on CPU.
+    # setup_caches in utils.gpt may allocate on CPU; explicitly relocate caches and mask.
     model.setup_caches(max_batch_size=1, max_seq_length=gpt_config.block_size)
+    model.causal_mask = model.causal_mask.to(device=target_device)
     for block in model.transformer.h:
         kv = block.attn.kv_cache
         if kv is None:
             continue
-        if kv.k_cache.dtype != torch.float32:
-            kv.k_cache = kv.k_cache.float()
-        if kv.v_cache.dtype != torch.float32:
-            kv.v_cache = kv.v_cache.float()
+        kv.k_cache = kv.k_cache.to(device=target_device, dtype=torch.float32)
+        kv.v_cache = kv.v_cache.to(device=target_device, dtype=torch.float32)
     return model, gpt_config
 
 
